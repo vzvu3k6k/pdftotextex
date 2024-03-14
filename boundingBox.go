@@ -7,15 +7,15 @@ import (
 	"strconv"
 )
 
-type boundingBox struct {
+type BoundingBox struct {
 	Page int
 	Rect *Rect
 	Text string
 }
 
 // LoadBoundingBoxesは`pdftotext -tsv`によって出力されたバウンディングボックスの情報を読み込む。
-func LoadBoundingBoxes(in io.Reader) ([]*boundingBox, error) {
-	boundingBoxes := []*boundingBox{}
+func LoadBoundingBoxes(in io.Reader) ([]*BoundingBox, error) {
+	boundingBoxes := []*BoundingBox{}
 
 	r := csv.NewReader(in)
 	r.Comma = '\t'
@@ -83,7 +83,7 @@ func LoadBoundingBoxes(in io.Reader) ([]*boundingBox, error) {
 		}
 		text := record[11]
 
-		boundingBoxes = append(boundingBoxes, &boundingBox{
+		boundingBoxes = append(boundingBoxes, &BoundingBox{
 			Page: page,
 			Text: text,
 			Rect: &Rect{

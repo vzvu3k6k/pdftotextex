@@ -4,12 +4,31 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/vzvu3k6k/hyperpaper"
 )
 
 func handleErr(err error) {
 	log.Fatal(err)
+}
+
+func buildHTML(boundingBoxes []*hyperpaper.BoundingBox, visibleRects []*hyperpaper.Rect) string {
+	var html strings.Builder
+
+	for _, b := range boundingBoxes {
+		if b.Page != 1 {
+			continue
+		}
+		for _, r := range visibleRects {
+			if hyperpaper.IsOverlapping(b.Rect, r) {
+				html.WriteString(b.Text)
+				break
+			}
+		}
+	}
+
+	return html.String()
 }
 
 func main() {
@@ -35,15 +54,5 @@ func main() {
 		handleErr(err)
 	}
 
-	for _, b := range boundingBoxes {
-		if b.Page != 1 {
-			continue
-		}
-		for _, r := range visibleRects {
-			if hyperpaper.IsOverlapping(b.Rect, r) {
-				fmt.Printf("visible: %s\n", b.Text)
-				break
-			}
-		}
-	}
+	fmt.Print(buildHTML(boundingBoxes, visibleRects))
 }
