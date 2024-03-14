@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+
+	"github.com/vzvu3k6k/hyperpaper"
 )
 
 func handleErr(err error) {
@@ -47,23 +49,7 @@ func handlePageElement(element xml.StartElement) (int, int, error) {
 	return pageWidth, pageHeight, nil
 }
 
-func lookupOverlappingBoundingBox(boxes []*BoundingBox, page int, x, y, width, height float64) (*BoundingBox, bool) {
-	for _, box := range boxes {
-		if box.Page != page {
-			continue
-		}
-		if box.X+box.Width < x || x+width < box.X {
-			continue
-		}
-		if box.Y+box.Height < y || y+height < box.Y {
-			continue
-		}
-		return box, true
-	}
-	return nil, false
-}
-
-func buildHTML(in io.Reader, boundingBoxes []*BoundingBox) error {
+func buildHTML(in io.Reader, boundingBoxes []*boundingBox) error {
 	var pageWidth, pageHeight int
 
 	d := xml.NewDecoder(in)
@@ -135,15 +121,22 @@ func buildHTML(in io.Reader, boundingBoxes []*BoundingBox) error {
 
 				s, _ := lookupAttrValue(token.Attr, "STRING")
 				fmt.Printf("layout text: %s\n", s)
-				boundingBox, ok := lookupOverlappingBoundingBox(
-					boundingBoxes,
-					1,
-					float64(x)/float64(pageWidth),
-					float64(y)/float64(pageHeight),
-					float64(width)/float64(pageWidth),
-					float64(height)/float64(pageHeight),
-				)
-				if !ok {
+
+				var boundingBox *boundingBox
+				for _, b := range boundingBoxes {
+					if b.Page != 1 {
+						continue
+					}
+					if hyperpaper.IsOverlapping(b.Rect, &hyperpaper.Rect{
+						X:      float64(x) / float64(pageWidth),
+						Y:      float64(y) / float64(pageHeight),
+						Width:  float64(width) / float64(pageWidth),
+						Height: float64(height) / float64(pageHeight),
+					}) {
+						boundingBox = b
+					}
+				}
+				if boundingBox == nil {
 					return fmt.Errorf("bounding box for %q not found", token)
 				}
 				fmt.Printf("bb: %+v\n", boundingBox.Text)
@@ -166,18 +159,15 @@ func buildHTML(in io.Reader, boundingBoxes []*BoundingBox) error {
 	return nil
 }
 
-type BoundingBox struct {
-	Page   int
-	X      float64
-	Y      float64
-	Width  float64
-	Height float64
-	Text   string
+type boundingBox struct {
+	Page int
+	Rect *hyperpaper.Rect
+	Text string
 }
 
 // loadBoundingBoxesは`pdftotext -tsv`によって出力されたバウンディングボックスの情報を読み込む。
-func loadBoundingBoxes(in io.Reader) ([]*BoundingBox, error) {
-	boundingBoxes := []*BoundingBox{}
+func loadBoundingBoxes(in io.Reader) ([]*boundingBox, error) {
+	boundingBoxes := []*boundingBox{}
 
 	r := csv.NewReader(in)
 	r.Comma = '\t'
@@ -245,13 +235,15 @@ func loadBoundingBoxes(in io.Reader) ([]*BoundingBox, error) {
 		}
 		text := record[11]
 
-		boundingBoxes = append(boundingBoxes, &BoundingBox{
-			Page:   page,
-			X:      x / pageWidth,
-			Y:      y / pageHeight,
-			Width:  width / pageWidth,
-			Height: height / pageHeight,
-			Text:   text,
+		boundingBoxes = append(boundingBoxes, &boundingBox{
+			Page: page,
+			Text: text,
+			Rect: &hyperpaper.Rect{
+				X:      x / pageWidth,
+				Y:      y / pageHeight,
+				Width:  width / pageWidth,
+				Height: height / pageHeight,
+			},
 		})
 	}
 
