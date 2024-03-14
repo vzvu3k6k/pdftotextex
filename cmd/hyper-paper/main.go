@@ -49,7 +49,62 @@ func handlePageElement(element xml.StartElement) (int, int, error) {
 	return pageWidth, pageHeight, nil
 }
 
-func buildHTML(in io.Reader, boundingBoxes []*boundingBox) error {
+func handleLineElement(element xml.StartElement, pageWidth, pageHeight int) (*hyperpaper.Rect, error) {
+	typeAttr, ok := lookupAttrValue(element.Attr, "TYPE")
+	if !ok {
+		return nil, fmt.Errorf("LINE element has no TYPE attribute")
+	}
+	if typeAttr != "本文" {
+		return nil, nil
+	}
+
+	xAttrValue, ok := lookupAttrValue(element.Attr, "X")
+	if !ok {
+		return nil, fmt.Errorf("LINE element has no X attribute")
+	}
+	x, err := strconv.Atoi(xAttrValue)
+	if err != nil {
+		return nil, err
+	}
+
+	yAttrValue, ok := lookupAttrValue(element.Attr, "Y")
+	if !ok {
+		return nil, fmt.Errorf("LINE element has no Y attribute")
+	}
+	y, err := strconv.Atoi(yAttrValue)
+	if err != nil {
+		return nil, err
+	}
+
+	widthAttrValue, ok := lookupAttrValue(element.Attr, "WIDTH")
+	if !ok {
+		return nil, fmt.Errorf("LINE element has no WIDTH attribute")
+	}
+	width, err := strconv.Atoi(widthAttrValue)
+	if err != nil {
+		return nil, err
+	}
+
+	heightAttrValue, ok := lookupAttrValue(element.Attr, "HEIGHT")
+	if !ok {
+		return nil, fmt.Errorf("LINE element has no HEIGHT attribute")
+	}
+	height, err := strconv.Atoi(heightAttrValue)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hyperpaper.Rect{
+		X:      float64(x) / float64(pageWidth),
+		Y:      float64(y) / float64(pageHeight),
+		Width:  float64(width) / float64(pageWidth),
+		Height: float64(height) / float64(pageHeight),
+	}, nil
+}
+
+func buildVisibleRects(in io.Reader) ([]*hyperpaper.Rect, error) {
+	rects := []*hyperpaper.Rect{}
+
 	var pageWidth, pageHeight int
 
 	d := xml.NewDecoder(in)
@@ -60,7 +115,7 @@ func buildHTML(in io.Reader, boundingBoxes []*boundingBox) error {
 			break
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		switch token := token.(type) {
 		case xml.StartElement:
@@ -68,78 +123,21 @@ func buildHTML(in io.Reader, boundingBoxes []*boundingBox) error {
 			case "PAGE":
 				pageWidth, pageHeight, err = handlePageElement(token)
 				if err != nil {
-					return err
+					return nil, err
 				}
 			case "LINE":
-				typeAttr, ok := lookupAttrValue(token.Attr, "TYPE")
-				if !ok {
-					return fmt.Errorf("LINE element has no TYPE attribute")
-				}
-				if typeAttr == "本文" {
-					stringAttr, ok := lookupAttrValue(token.Attr, "STRING")
-					if !ok {
-						return fmt.Errorf("LINE element has no STRING attribute")
-					}
-					_ = stringAttr
-				}
-
-				xAttrValue, ok := lookupAttrValue(token.Attr, "X")
-				if !ok {
-					return fmt.Errorf("LINE element has no X attribute")
-				}
-				x, err := strconv.Atoi(xAttrValue)
+				rect, err := handleLineElement(token, pageWidth, pageHeight)
 				if err != nil {
-					return err
+					return nil, err
 				}
+				if rect == nil {
+					continue
+				}
+				rects = append(rects, rect)
+				// s, _ := lookupAttrValue(token.Attr, "STRING")
+				// fmt.Printf("layout text: %s\n", s)
 
-				yAttrValue, ok := lookupAttrValue(token.Attr, "Y")
-				if !ok {
-					return fmt.Errorf("LINE element has no Y attribute")
-				}
-				y, err := strconv.Atoi(yAttrValue)
-				if err != nil {
-					return err
-				}
-
-				widthAttrValue, ok := lookupAttrValue(token.Attr, "WIDTH")
-				if !ok {
-					return fmt.Errorf("LINE element has no WIDTH attribute")
-				}
-				width, err := strconv.Atoi(widthAttrValue)
-				if err != nil {
-					return err
-				}
-
-				heightAttrValue, ok := lookupAttrValue(token.Attr, "HEIGHT")
-				if !ok {
-					return fmt.Errorf("LINE element has no HEIGHT attribute")
-				}
-				height, err := strconv.Atoi(heightAttrValue)
-				if err != nil {
-					return err
-				}
-
-				s, _ := lookupAttrValue(token.Attr, "STRING")
-				fmt.Printf("layout text: %s\n", s)
-
-				var boundingBox *boundingBox
-				for _, b := range boundingBoxes {
-					if b.Page != 1 {
-						continue
-					}
-					if hyperpaper.IsOverlapping(b.Rect, &hyperpaper.Rect{
-						X:      float64(x) / float64(pageWidth),
-						Y:      float64(y) / float64(pageHeight),
-						Width:  float64(width) / float64(pageWidth),
-						Height: float64(height) / float64(pageHeight),
-					}) {
-						boundingBox = b
-					}
-				}
-				if boundingBox == nil {
-					return fmt.Errorf("bounding box for %q not found", token)
-				}
-				fmt.Printf("bb: %+v\n", boundingBox.Text)
+				// fmt.Printf("bb: %+v\n", boundingBox.Text)
 			}
 		case xml.EndElement:
 			//do something
@@ -155,8 +153,7 @@ func buildHTML(in io.Reader, boundingBoxes []*boundingBox) error {
 			panic("unknown xml token.")
 		}
 	}
-	fmt.Printf("pageWidth: %d, pageHeight: %d\n", pageWidth, pageHeight)
-	return nil
+	return rects, nil
 }
 
 type boundingBox struct {
@@ -257,7 +254,7 @@ func main() {
 	}
 	defer boundingBoxesFile.Close()
 
-	boxes, err := loadBoundingBoxes(boundingBoxesFile)
+	boundingBoxes, err := loadBoundingBoxes(boundingBoxesFile)
 	if err != nil {
 		handleErr(err)
 	}
@@ -268,7 +265,17 @@ func main() {
 	}
 	defer layoutFile.Close()
 
-	if err := buildHTML(layoutFile, boxes); err != nil {
+	visibleRects, err := buildVisibleRects(layoutFile)
+	if err != nil {
 		handleErr(err)
+	}
+
+	for _, b := range boundingBoxes {
+		for _, r := range visibleRects {
+			if hyperpaper.IsOverlapping(b.Rect, r) {
+				fmt.Printf("visible: %s\n", b.Text)
+				break
+			}
+		}
 	}
 }
