@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"os"
 	"strconv"
 )
@@ -48,20 +47,18 @@ func handlePageElement(element xml.StartElement) (int, int, error) {
 	return pageWidth, pageHeight, nil
 }
 
-func almostEqual(a, b float64) bool {
-	const epsilon = 1e-3 * 5
-	return math.Abs(a-b) < epsilon
-}
-
-func lookupBoundingBox(boxes []*BoundingBox, page int, x, y, width, height float64) (*BoundingBox, bool) {
+func lookupOverlappingBoundingBox(boxes []*BoundingBox, page int, x, y, width, height float64) (*BoundingBox, bool) {
 	for _, box := range boxes {
-		if box.Page == page &&
-			almostEqual(box.X, x) &&
-			almostEqual(box.Y, y) &&
-			almostEqual(box.Width, width) &&
-			almostEqual(box.Height, height) {
-			return box, true
+		if box.Page != page {
+			continue
 		}
+		if box.X+box.Width < x || x+width < box.X {
+			continue
+		}
+		if box.Y+box.Height < y || y+height < box.Y {
+			continue
+		}
+		return box, true
 	}
 	return nil, false
 }
@@ -136,7 +133,9 @@ func buildHTML(in io.Reader, boundingBoxes []*BoundingBox) error {
 					return err
 				}
 
-				boundingBox, ok := lookupBoundingBox(
+				s, _ := lookupAttrValue(token.Attr, "STRING")
+				fmt.Printf("layout text: %s\n", s)
+				boundingBox, ok := lookupOverlappingBoundingBox(
 					boundingBoxes,
 					1,
 					float64(x)/float64(pageWidth),
@@ -217,6 +216,11 @@ func loadBoundingBoxes(in io.Reader) ([]*BoundingBox, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+
+		// conf = -1の行は特殊な意味を持つので読み飛ばす。
+		if record[10] == "-1" {
+			continue
 		}
 
 		page, err := strconv.Atoi(record[1])
