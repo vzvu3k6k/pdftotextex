@@ -271,6 +271,9 @@ func main() {
 	}
 
 	for _, b := range boundingBoxes {
+		if b.Page != 1 {
+			continue
+		}
 		for _, r := range visibleRects {
 			if hyperpaper.IsOverlapping(b.Rect, r) {
 				fmt.Printf("visible: %s\n", b.Text)
